@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Заголовок страницы -->
+    <title>Поиск банкоматов на карте</title>
+    <!-- Сслыки на каскадные таблицы стилей -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+
+<body>
+    <!-- Навигационное меню (верхняя панель навигации - шапка) -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-danger justify-content-center">
+        <a class="navbar-brand" href="#">Поиск ближайших банкоматов</a>
+    </nav>
+
+    <div class="container mt-5">
+        <!-- Описание -->
+        <div class="text-center">
+            <h2 class="display-4">Сайт для поиска банкоматов, просмотра погоды, чтения новостей</h2>
+            <p class="func text-left">Функционал сайта позволяет:</p>
+            <ol class="list-group text-left">
+                <li>Определять местоположение на карте</li>
+                <li>Просматривать ближайшие банкоматы</li>
+                <li>Строить маршруты до банкоматов</li>
+                <li>Добавлять маркеры на карту</li>
+                <li>Просматривать текущую погоду</li>
+                <li>Просматривать последние новости</li>
+            </ol>
+        </div>
+
+        <!-- Карта -->
+        <div id="map" class="map border mt-4" style="height: 350px;"></div>
+
+        <!-- Секция добавления маркера на карту с возможностью загрузки изображения -->
+        <div class="text-center mt-4">
+            <input type="file" id="imageUpload" accept="image/*" class="btn btn-outline-secondary mb-2">
+            <button id="add" class="btn btn-danger">Добавить маркер</button>
+        </div>
+
+        <!-- Секция о новостях -->
+        <div id="news-info" class="mt-4">
+            <h4>Информация о новостях:</h4>
+            <ul id="news" class="list-unstyled">
+                <li>Подгружаем...</li>
+            </ul>
+        </div>
+
+        <!-- Секция о погоде -->
+        <div id="weather-info" class="mt-4">
+            <h4>Информация о погоде:</h4>
+            <ul id="weather" class="list-unstyled">
+                <li>Подгружаем...</li>
+            </ul>
+        </div>
+
+    </div>
+
+    <!-- Подвал -->
+    <footer class="bg-danger text-white text-center py-3 mt-5">
+        <p>© 2025 3ИТД.22 HTML 5 API Храмцев А.С.</p>
+    </footer>
+
+    <!-- Подключение библиотек для Bootstrap -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.1/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <!-- Получение новостей -->
+    <script>
+        const ws = new WebSocket('ws://localhost:3000');
+        ws.onmessage = function (event) {
+            const newsList = JSON.parse(event.data);
+            const newsElement = document.getElementById('news');
+            newsElement.innerHTML = '';
+
+            newsList.forEach(newsItem => {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = newsItem.link;  // Ссылка на новость
+                a.textContent = newsItem.title;  // Заголовок новости
+                a.target = "_blank";  // Открыть в новой вкладке
+                a.classList.add('text-primary');  // Стиль ссылки
+                li.appendChild(a);
+                newsElement.appendChild(li);
+            });
+        };
+    </script>
+
+    <!-- Подключение Yandex карт -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=79842dab-8931-46cd-b34c-675cfec2eaf2&lang=ru_RU"></script>
+
+    <!-- Работа с картой -->
+    <script>
+        // Получаем настройки из переменных окружения
+        let defaultCoordMoscowCenter = [55.7558, 37.6173]; // Центр Москвы (по умолчанию)
+        let isMarked = false; // Флаг добавления маркера
+        const portWeather = 4000;
+
+        function init() {
+            isHTML5Supported();
+
+            let myMap = new ymaps.Map('map', {
+                center: defaultCoordMoscowCenter,
+                zoom: 12,
+                controls: ['routePanelControl', 'zoomControl']
+            });
+
+            myMap.controls.get('zoomControl').options.set({
+                position: { right: 10, top: 50 }
+            });
+
+            let myRoutePanelControl = myMap.controls.get('routePanelControl');
+            myRoutePanelControl.routePanel.options.set({
+                types: { auto: true, masstransit: true, pedestrian: true }
+            });
+
+            loadMarkers(myMap, myRoutePanelControl);
+
+            const myLastLocation = JSON.parse(localStorage.getItem('lastLocation'));
+            if (myLastLocation) {
+                myMap.setCenter(myLastLocation, 15);
+                let currentMarker = new ymaps.Placemark(myLastLocation, {
+                    balloonContent: 'Последнее местоположение'
+                });
+                myMap.geoObjects.add(currentMarker);
+                findNearbyATMs(myLastLocation, myMap);
+                displayWeather(myLastLocation);
+            } else {
+                getUserLocation(myMap, myRoutePanelControl);
+            }
+
+            document.getElementById('add').onclick = () => {
+                isMarked = !isMarked;
+                const button = document.getElementById('add');
+                button.style.backgroundColor = isMarked ? 'green' : '';
+                button.textContent = isMarked ? 'Завершить добавление маркера' : 'Добавить маркер';
+                alert(isMarked ? 'Для добавления маркера кликните на необходимую точку на карте' : 'Режим добавления маркера завершен');
+            };
+
+            myMap.events.add('click', function (e) {
+                if (isMarked) {
+                    let myCoords = e.get('coords');
+                    let myMarkerName = prompt("Введите наименование маркера:");
+                    const myFileInput = document.getElementById('imageUpload');
+                    const myFile = myFileInput.files[0];
+
+                    if (myMarkerName) {
+                        const myReader = new FileReader();
+                        myReader.onload = function () {
+                            // Вывод в консоль результата чтения файла
+                            console.log("Файл загружен:", myReader.result);
+
+                            // Добавление маркера на карту с изображением
+                            addMarkerToMap({ coords: myCoords, name: myMarkerName, photo: myReader.result }, myMap, myRoutePanelControl);
+                            saveMarker({ coords: myCoords, name: myMarkerName, photo: myReader.result });
+                        };
+
+                        if (myFile) {
+                            myReader.readAsDataURL(myFile);
+                        } else {
+                            // Если файл не выбран, добавляем маркер без фото
+                            addMarkerToMap({ coords: myCoords, name: myMarkerName, photo: null }, myMap, myRoutePanelControl);
+                            saveMarker({ coords: myCoords, name: myMarkerName, photo: null });
+                        }
+
+                        isMarked = false;
+                        const button = document.getElementById('add');
+                        button.style.backgroundColor = '';
+                        button.textContent = 'Добавить маркер';
+                    }
+                }
+            });
+        }
+
+        // Функция для проверки поддежки HTML5 браузером пользователя
+        function isHTML5Supported() {
+            const features = {
+                localStorage: 'localStorage' in window,
+                sessionStorage: 'sessionStorage' in window,
+                canvas: !!document.createElement('canvas').getContext,
+                audio: !!document.createElement('audio').canPlayType,
+                video: !!document.createElement('video').canPlayType,
+                geolocation: 'geolocation' in navigator,
+                webSockets: 'WebSocket' in window,
+            };
+
+            for (const [feature, isSupported] of Object.entries(features)) {
+                console.log(`${feature}: ${isSupported ? 'Поддерживается' : 'НЕ поддерживается'}`);
+            }
+        }
+
+        // Функция для определения местоположения пользователя
+        function getUserLocation(myMap, routePanelControl) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const myUserLocation = [position.coords.latitude, position.coords.longitude];
+                        myMap.setCenter(myUserLocation, 15);
+
+                        let myCurrentLocationMarker = new ymaps.Placemark(myUserLocation, {
+                            balloonContent: 'Вы находитесь здесь!'
+                        });
+                        myMap.geoObjects.add(myCurrentLocationMarker);
+
+                        localStorage.setItem('lastLocation', JSON.stringify(myUserLocation));
+
+                        routePanelControl.routePanel.state.set({
+                            from: myUserLocation,
+                            toEnabled: true
+                        });
+
+                        findNearbyATMs(myUserLocation, myMap);
+                        displayWeather(myUserLocation);
+                    },
+                    (error) => {
+                        alert("Не удалось определить ваше местоположение. Карта покажет общую область");
+                        console.error("Геолокация: ошибка определения местоположения", error);
+                        myMap.setCenter(defaultCoordMoscowCenter, 12);
+                        findNearbyATMs(defaultCoordMoscowCenter, myMap);
+                        displayWeather(defaultCoordMoscowCenter);
+                    }
+                );
+            } else {
+                alert("Ваш браузер не поддерживает геолокацию");
+            }
+        }
+
+        // Функция для показа ближайших банкоматов
+        function findNearbyATMs(userLocation, map) {
+            let searchControl = new ymaps.control.SearchControl({
+                options: {
+                    provider: 'yandex#search',
+                    results: 50,
+                    noPlacemark: true,
+                    boundedBy: map.getBounds(),
+                    strictBounds: false
+                }
+            });
+            map.controls.add(searchControl);
+
+            searchControl.search("банкомат").then(() => {
+                searchControl.getResultsArray().forEach((result) => {
+                    let coords = result.geometry.getCoordinates();
+                    let name = result.properties.get('name');
+                    addMarkerToMap({ coords: coords, name: name }, map, routePanelControl);
+                });
+            }).catch((error) => {
+                console.error("Ошибка при поиске банкоматов:", error);
+            });
+        }
+
+        // Функция загрузки маркера из localStorage
+        function loadMarkers(map, routePanelControl) {
+            let markers = JSON.parse(localStorage.getItem('markers')) || [];
+            markers.forEach(marker => {
+                addMarkerToMap(marker, map, routePanelControl);
+            });
+        }
+
+        // Функция сохранения маркера в localStorage
+        function saveMarker(marker) {
+            let markers = JSON.parse(localStorage.getItem('markers')) || [];
+            markers.push(marker);
+            localStorage.setItem('markers', JSON.stringify(markers));
+        }
+
+        // Функция для добавления маркера на карту
+        function addMarkerToMap(marker, map, routePanelControl) {
+            const currentTime = new Date().toLocaleString();
+            let placemarkContent = `<b>${marker.name}</b><br>${currentTime}`;
+            if (marker.photo) {
+                placemarkContent += `<br><img src="${marker.photo}" alt="Фото маркера" style="width:100px;height:auto;">`;
+            }
+
+            let placemark = new ymaps.Placemark(marker.coords, {
+                balloonContent: placemarkContent,
+                hintContent: "Нажмите, чтобы построить маршрут"
+            });
+
+            placemark.events.add('click', function () {
+                routePanelControl.routePanel.state.set({
+                    to: marker.coords
+                });
+            });
+
+            map.geoObjects.add(placemark);
+        }
+
+        // Функция для отображения погоды
+        function displayWeather(coords) {
+            const apiUrl = `http://localhost:${portWeather}/weather?lat=${coords[0]}&lon=${coords[1]}`;
+
+            fetch(apiUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Ошибка при получении данных о погоде');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const temperature = data.fact.temp;
+                    const condition = data.fact.condition;
+                    const weatherData = `Температура: ${temperature}°C<br>Состояние: ${condition}`;
+
+                    document.getElementById('weather').innerHTML = weatherData;
+                    document.getElementById('weather-info').style.display = 'block'; // Показываем блок с погодой
+                })
+                .catch(error => console.error("Ошибка при получении данных о погоде:", error));
+        }
+
+        ymaps.ready(init);
+    </script>
+</body>
+
+</html>
